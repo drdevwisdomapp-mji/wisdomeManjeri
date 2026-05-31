@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { 
   Calendar, MapPin, Plus, Edit3, Eye, Trash2, 
   Download, LogOut, Loader2, ListChecks, FileText, 
-  Image, Search
+  Image, Search, Share2, Copy, Check
 } from 'lucide-react';
 import { supabase, uploadEventFlyer } from '../utils/supabaseClient';
 import { FormBuilder } from '../components/FormBuilder';
@@ -42,6 +42,81 @@ export const AdminDashboard: React.FC = () => {
 
   // Uploading flyer state
   const [uploadingImage, setUploadingImage] = useState(false);
+
+  // Share Event Modal state and helpers
+  const [sharingEvent, setSharingEvent] = useState<WisdomEvent | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [sharingLoading, setSharingLoading] = useState(false);
+
+  const copyToClipboard = (slug: string) => {
+    const eventUrl = `${window.location.origin}/event/${slug}`;
+    navigator.clipboard.writeText(eventUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const downloadQRCode = async (slug: string) => {
+    const eventUrl = `${window.location.origin}/event/${slug}`;
+    try {
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(eventUrl)}`;
+      const response = await fetch(qrUrl);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `QR_${slug}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      alert('Could not download QR Code.');
+    }
+  };
+
+  const triggerWebShare = async (event: WisdomEvent) => {
+    const eventUrl = `${window.location.origin}/event/${event.slug}`;
+    setSharingLoading(true);
+
+    try {
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(eventUrl)}`;
+      
+      // Load QR code image into a sharing file blob
+      const response = await fetch(qrUrl);
+      const blob = await response.blob();
+      const file = new File([blob], `wisdom_event_${event.slug}.png`, { type: 'image/png' });
+
+      // Share both QR code image file and text URL natively if supported
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          title: event.title,
+          text: `Join us for "${event.title}". Register here:`,
+          url: eventUrl,
+          files: [file]
+        });
+      } else {
+        // Fallback to text link
+        await navigator.share({
+          title: event.title,
+          text: `Join us for "${event.title}". Register here:`,
+          url: eventUrl
+        });
+      }
+    } catch (err) {
+      console.warn('Native sharing failed, falling back to text-only share:', err);
+      try {
+        await navigator.share({
+          title: event.title,
+          text: `Join us for "${event.title}". Register here:`,
+          url: eventUrl
+        });
+      } catch (fallbackErr) {
+        alert('Native sharing is not supported on this device. Use the download QR or copy link buttons below!');
+      }
+    } finally {
+      setSharingLoading(false);
+    }
+  };
 
   useEffect(() => {
     // Authenticate Admin Session
@@ -480,6 +555,9 @@ export const AdminDashboard: React.FC = () => {
                         <Link to={`/event/${event.slug}`} target="_blank" className="btn btn-secondary icon-btn-only" title="Preview Public Page">
                           <Eye size={16} />
                         </Link>
+                        <button onClick={() => setSharingEvent(event)} className="btn btn-accent icon-btn-only" title="Share Event & QR Code">
+                          <Share2 size={16} />
+                        </button>
                         <button
                           onClick={() => {
                             setSelectedEventId(event.id);
@@ -803,6 +881,60 @@ export const AdminDashboard: React.FC = () => {
             </div>
           )}
         </main>
+      )}
+
+      {/* ===================================================================
+          SHARE QR & LINK MODAL
+          =================================================================== */}
+      {sharingEvent && (
+        <div className="share-modal-overlay flex-center" onClick={() => setSharingEvent(null)}>
+          <div className="share-modal-card glass-card" onClick={e => e.stopPropagation()}>
+            <div className="share-modal-header">
+              <h3>Share Event Registration</h3>
+              <button onClick={() => setSharingEvent(null)} className="close-modal-btn">×</button>
+            </div>
+            
+            <div className="share-modal-body">
+              <h4 className="share-event-title">{sharingEvent.title}</h4>
+              
+              {/* QR Code Container */}
+              <div className="share-qr-frame">
+                <img 
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(`${window.location.origin}/event/${sharingEvent.slug}`)}`}
+                  alt="Event Registration QR Code"
+                  className="share-qr-img"
+                />
+              </div>
+              <p className="qr-guide-text">Scan this QR code to register instantly.</p>
+              
+              {/* Link Box */}
+              <div className="share-link-box">
+                <span className="share-link-text truncate">
+                  {`${window.location.origin}/event/${sharingEvent.slug}`}
+                </span>
+                <button onClick={() => copyToClipboard(sharingEvent.slug)} className="btn-copy-link flex-center" title="Copy Link">
+                  {copied ? <Check size={16} className="copied-check" /> : <Copy size={16} />}
+                </button>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="share-actions-row">
+                <button onClick={() => triggerWebShare(sharingEvent)} disabled={sharingLoading} className="btn btn-primary flex-center share-btn-action">
+                  {sharingLoading ? (
+                    <Loader2 size={16} className="spinner-icon animate-spin" />
+                  ) : (
+                    <>
+                      <Share2 size={16} /> Share via WhatsApp / Apps
+                    </>
+                  )}
+                </button>
+                <button onClick={() => downloadQRCode(sharingEvent.slug)} className="btn btn-secondary flex-center share-btn-action">
+                  <Download size={16} /> Download QR Code
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       <style>{`
@@ -1220,7 +1352,136 @@ export const AdminDashboard: React.FC = () => {
             max-width: 100%;
           }
         }
+
+        /* ===================================================================
+           SHARE MODAL STYLES
+           =================================================================== */
+        .share-modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100vw;
+          height: 100vh;
+          background: rgba(11, 15, 23, 0.65);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+          z-index: 9999;
+          animation: fadeIn 0.2s ease-out;
+        }
+        .share-modal-card {
+          width: 90%;
+          max-width: 420px;
+          padding: 24px;
+          background-color: var(--bg-card);
+          border-color: var(--primary);
+          animation: scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .share-modal-card:hover {
+          transform: none; /* Disable card hover on modal */
+        }
+        .share-modal-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          border-bottom: 1px solid var(--border);
+          padding-bottom: 12px;
+          margin-bottom: 16px;
+        }
+        .share-modal-header h3 {
+          font-size: 1.2rem;
+          color: var(--primary);
+        }
+        .close-modal-btn {
+          background: transparent;
+          border: none;
+          font-size: 2rem;
+          cursor: pointer;
+          color: var(--text-muted);
+          line-height: 0.5;
+        }
+        .close-modal-btn:hover {
+          color: var(--error);
+        }
+        .share-modal-body {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 16px;
+          text-align: center;
+        }
+        .share-event-title {
+          font-size: 1.1rem;
+          color: var(--text-main);
+          font-weight: 700;
+        }
+        .share-qr-frame {
+          padding: 12px;
+          background-color: #ffffff;
+          border-radius: var(--radius-sm);
+          border: 1px solid var(--border);
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        }
+        .share-qr-img {
+          display: block;
+          width: 180px;
+          height: 180px;
+        }
+        .qr-guide-text {
+          font-size: 0.8rem;
+          color: var(--text-muted);
+        }
+        .share-link-box {
+          display: flex;
+          align-items: center;
+          background-color: var(--bg-main);
+          border: 1px solid var(--border);
+          border-radius: var(--radius-sm);
+          padding: 6px 12px;
+          width: 100%;
+          gap: 10px;
+        }
+        .share-link-text {
+          font-size: 0.85rem;
+          color: var(--text-muted);
+          text-align: left;
+          flex-grow: 1;
+        }
+        .btn-copy-link {
+          background: transparent;
+          border: none;
+          color: var(--text-muted);
+          cursor: pointer;
+          padding: 6px;
+          transition: var(--transition-fast);
+        }
+        .btn-copy-link:hover {
+          color: var(--primary);
+        }
+        .copied-check {
+          color: var(--success);
+        }
+        .share-actions-row {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          width: 100%;
+        }
+        .share-btn-action {
+          width: 100%;
+          font-size: 0.9rem;
+          padding: 10px 16px;
+        }
+
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes scaleIn {
+          from { transform: scale(0.95); opacity: 0; }
+          to { transform: scale(1); opacity: 1; }
+        }
       `}</style>
     </div>
   );
 };
+
